@@ -1,0 +1,122 @@
+import torch 
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from torchvision import datasets, transforms
+from tqdm import tqdm
+transform = transforms.Compose([
+    transforms.RandomHorizontalFlip(), 
+    transforms.ToTensor(),
+    transforms.Normalize((0.5,), (0.5,))
+])
+
+
+class FashionMNISTDataset(Dataset):
+    def __init__(self, dataset, transform=None):
+        self.dataset = dataset
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        image, label = self.dataset[idx]
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+
+class FashionCNN(nn.Module):
+    def __init__(self, channel=1, mid_channel=32, final_channel=64):
+        super(FashionCNN, self).__init__()
+        self.layer1 = nn.Sequential(
+            nn.Conv2d(channel, mid_channel, 3, padding=1),
+            nn.BatchNorm2d(mid_channel),
+            nn.ReLU(),
+            nn.MaxPool2d(2))
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(mid_channel, final_channel, 3, padding=1),
+            nn.BatchNorm2d(final_channel),
+            nn.ReLU(),
+            nn.MaxPool2d(2))
+        self.dropout = nn.Dropout(0.25)
+        self.fc1 = nn.Linear(7*7*final_channel, 512)
+        self.fc2 = nn.Linear(512, 128)
+        self.fc3 = nn.Linear(128, 10)
+
+    def forward(self, x):
+        out = self.layer1(x)
+        out = self.layer2(out)
+        out = out.view(out.size(0), -1)
+        out = self.fc1(out)
+        out = torch.relu(out)
+        out = self.dropout(out)
+        out = self.fc2(out)
+        out = torch.relu(out)
+        return self.fc3(out)
+
+if __name__ == '__main__':
+ 
+    train_set = datasets.FashionMNIST(
+        root='./data',
+        train=True,
+        download=True,
+        transform=transform)
+    
+    test_set = datasets.FashionMNIST(
+        root='./data',
+        train=False,
+        download=True,
+        transform=transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))]))
+    
+
+    train_loader = DataLoader(
+        FashionMNISTDataset(train_set),
+        batch_size=64,
+        shuffle=True,
+        num_workers=0)
+    
+    test_loader = DataLoader(
+        FashionMNISTDataset(test_set),
+        batch_size=64,
+        shuffle=False,
+        num_workers=0,)
+
+  
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = FashionCNN().to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
+
+ 
+    num_epochs = 10
+    for epoch in range(num_epochs):
+        model.train()
+        total_loss = 0
+        with tqdm(train_loader, desc=f"Epoch {epoch+1}") as pbar:
+            for images, labels in pbar:
+                images, labels = images.to(device), labels.to(device)
+                
+                optimizer.zero_grad()
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                
+                total_loss += loss.item()
+
+        model.eval()
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for images, labels in test_loader:
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+        
+        acc = 100 * correct / total  
+        print(f"Epoch {epoch+1}, Loss: {total_loss/len(train_loader):.4f} | Acc: {acc:.2f}%")
